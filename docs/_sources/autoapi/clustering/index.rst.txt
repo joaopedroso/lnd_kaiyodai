@@ -1,0 +1,48 @@
+:mod:`clustering`
+=================
+
+.. py:module:: clustering
+
+.. autoapi-nested-parse::
+
+   clustering: Use scikit-learn models for clustering a set of distribution centers.
+
+   The aim is to select a predefined number of *candidates* for implementing
+   a distribution center.  Data are: 
+
+     - number of candidates to select
+     - customer locations
+     - potential distribution center locations
+     - plant locations
+
+   See `TestSolving` below for examples of usage.
+
+
+
+Module Contents
+---------------
+
+.. function:: preclustering(cust, dc, prods, demand, n_clusters)
+
+   Clustering as a predecessor for optimization, to be used in logistics network design
+
+   :rtype: list of selected dc's (a subset of `dc`)
+   :cust: dict associating a customer id to its location as (latitute, longitude)
+   :dc: dict associating a distribution center id to its (latitute, longitude)
+   :prods: list (set) of products 
+   :demand: demand[k,p] -> units of `p` demanded by customer `k`
+   :n_clusters: number of clusters to use
+
+
+.. py:class:: TestClustering
+
+   Bases: :class:`unittest.TestCase`
+
+   
+   .. method:: test_one(self)
+
+      Test optimizing the location of a small number of dc's from set of candidates
+
+
+
+

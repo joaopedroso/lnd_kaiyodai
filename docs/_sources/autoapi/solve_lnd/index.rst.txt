@@ -1,0 +1,33 @@
+:mod:`solve_lnd`
+================
+
+.. py:module:: solve_lnd
+
+.. autoapi-nested-parse::
+
+   solve_lnd: Main example for testing logistics network design optimizer
+
+   This program illustrates how to use the optimization model implemented
+   in module `lnd.py`, with potential places for distribution centers
+   being pre-clustered by the method implemented in `clustering.py`.
+
+   Notice that for large instances, completing the tests may still take
+   a considerable time.
+
+
+
+Module Contents
+---------------
+
+.. py:class:: TestClusteringAndSolving
+
+   Bases: :class:`unittest.TestCase`
+
+   
+   .. method:: test_one(self)
+
+      Test clustering a set of potential dc's, then optimizing the location of a small number of them
+
+
+
+

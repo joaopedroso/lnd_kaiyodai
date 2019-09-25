@@ -1,0 +1,33 @@
+:mod:`mk_instances`
+===================
+
+.. py:module:: mk_instances
+
+
+Module Contents
+---------------
+
+.. function:: sample_locations(df, n_locations, rnd_stat)
+
+
+.. function:: mk_instance(df, n_plants, n_dcs, n_custs, seed, n_prods)
+
+
+.. function:: mk_instances()
+
+
+.. py:class:: TestInstances
+
+   Bases: :class:`unittest.TestCase`
+
+   
+   .. method:: test_one(self)
+
+
+
+   
+   .. method:: test_two(self)
+
+
+
+

@@ -1,0 +1,430 @@
+
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta charset="utf-8" />
+    <title>lnd &#8212; Logistics Network Design 0.1 documentation</title>
+    <link rel="stylesheet" href="../_static/alabaster.css" type="text/css" />
+    <link rel="stylesheet" href="../_static/pygments.css" type="text/css" />
+    <script type="text/javascript" id="documentation_options" data-url_root="../" src="../_static/documentation_options.js"></script>
+    <script type="text/javascript" src="../_static/jquery.js"></script>
+    <script type="text/javascript" src="../_static/underscore.js"></script>
+    <script type="text/javascript" src="../_static/doctools.js"></script>
+    <script type="text/javascript" src="../_static/language_data.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+   
+  <link rel="stylesheet" href="../_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Source code for lnd</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">lnd: Gurobi models for logistic network design</span>
+
+<span class="sd">There are two models:</span>
+
+<span class="sd">  - lnd_ms, for multiple-source supply</span>
+<span class="sd">  - lnd_ss, for single-source supply</span>
+
+<span class="sd">The aim is to select a predefined number of places for implementing</span>
+<span class="sd">a distribution center.  Data are: </span>
+
+<span class="sd">  - customer locations</span>
+<span class="sd">  - potential distribution center locations</span>
+<span class="sd">  - plant locations</span>
+<span class="sd">  - demand, bounds and costs</span>
+
+<span class="sd">See `TestSolving` below for examples of usage.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+
+<span class="kn">import</span> <span class="nn">unittest</span>
+<span class="kn">from</span> <span class="nn">geopy.distance</span> <span class="k">import</span> <span class="n">great_circle</span> <span class="k">as</span> <span class="n">distance</span>
+<span class="kn">from</span> <span class="nn">gurobipy</span> <span class="k">import</span> <span class="o">*</span>
+
+<span class="c1"># tqdm = lambda x: x</span>
+<span class="kn">from</span> <span class="nn">tqdm</span> <span class="k">import</span> <span class="n">tqdm</span>
+
+<div class="viewcode-block" id="lnd_ms"><a class="viewcode-back" href="../generated/lnd.html#lnd.lnd_ms">[docs]</a><span class="k">def</span> <span class="nf">lnd_ms</span><span class="p">(</span><span class="n">weight</span><span class="p">,</span> <span class="n">cust</span><span class="p">,</span> <span class="n">dc</span><span class="p">,</span> <span class="n">dc_lb</span><span class="p">,</span> <span class="n">dc_ub</span><span class="p">,</span> <span class="n">plnt</span><span class="p">,</span> <span class="n">plnt_ub</span><span class="p">,</span> <span class="n">demand</span><span class="p">,</span> <span class="n">tp_cost</span><span class="p">,</span> <span class="n">del_cost</span><span class="p">,</span> <span class="n">dc_fc</span><span class="p">,</span> <span class="n">dc_vc</span><span class="p">,</span> <span class="n">dc_num</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Logistics network design, multiple source</span>
+
+<span class="sd">    Gurobi model for multiple-source LND</span>
+
+<span class="sd">    :rtype: object of class `Model`, as defined in `gurobipy`</span>
+<span class="sd">    :weight: weight[p] -&gt; unit weight for product `p`</span>
+<span class="sd">    :cust: dict associating a customer id to its location as (latitute, longitude)</span>
+<span class="sd">    :dc: dict associating a distribution center id to its (latitute, longitude)</span>
+<span class="sd">    :dc_lb: dc_lb[k] -&gt; lower bound for distribution center k [not used]</span>
+<span class="sd">    :dc_ub: dc_ub[k] -&gt; upper bound for distribution center k</span>
+<span class="sd">    :plnt: dict associating a plant id to its (latitute, longitude)</span>
+<span class="sd">    :plnt_ub: plnt_ub[k] -&gt; upper bound for plant k</span>
+<span class="sd">    :demand: demand[k,p] -&gt; units of `p` demanded by customer `k`</span>
+<span class="sd">    :tp_cost: unit transportation cost (from the plant)</span>
+<span class="sd">    :del_cost: unit delivery cost (from a dc)</span>
+<span class="sd">    :dc_fc: fixed cost for opening a dc</span>
+<span class="sd">    :dc_vc: unit (variable) cost for operating a dc</span>
+<span class="sd">    :dc_num: (maximum) number of distribution centers to open</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">prod</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">weight</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
+    <span class="n">plnt_to_dc</span> <span class="o">=</span> <span class="p">[(</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">p</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">plnt</span> <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">dc</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">prod</span> <span class="k">if</span> <span class="n">plnt_ub</span><span class="o">.</span><span class="n">get</span><span class="p">((</span><span class="n">i</span><span class="p">,</span><span class="n">p</span><span class="p">),</span><span class="mi">0</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">]</span>
+    <span class="n">dc_to_cust</span> <span class="o">=</span> <span class="p">[(</span><span class="n">j</span><span class="p">,</span><span class="n">k</span><span class="p">,</span><span class="n">p</span><span class="p">)</span> <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">dc</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">cust</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">prod</span> <span class="k">if</span> <span class="n">demand</span><span class="p">[</span><span class="n">k</span><span class="p">,</span><span class="n">p</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">model</span> <span class="o">=</span> <span class="n">Model</span><span class="p">()</span>
+    <span class="n">x</span><span class="p">,</span><span class="n">y</span> <span class="o">=</span> <span class="p">{},</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">p</span><span class="p">)</span> <span class="ow">in</span> <span class="n">plnt_to_dc</span> <span class="o">+</span> <span class="n">dc_to_cust</span><span class="p">:</span>
+        <span class="n">x</span><span class="p">[</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">p</span><span class="p">]</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">addVar</span><span class="p">(</span><span class="n">vtype</span><span class="o">=</span><span class="s1">&#39;C&#39;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="n">f</span><span class="s1">&#39;x[</span><span class="si">{i}</span><span class="s1">,</span><span class="si">{j}</span><span class="s1">,</span><span class="si">{p}</span><span class="s1">]&#39;</span><span class="p">)</span>
+     
+    <span class="n">slack</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="p">(</span><span class="n">k</span><span class="p">,</span><span class="n">p</span><span class="p">)</span> <span class="ow">in</span> <span class="n">demand</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">demand</span><span class="p">[</span><span class="n">k</span><span class="p">,</span><span class="n">p</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mf">0.</span><span class="p">:</span>
+            <span class="n">slack</span><span class="p">[</span><span class="n">k</span><span class="p">,</span><span class="n">p</span><span class="p">]</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">addVar</span><span class="p">(</span><span class="n">vtype</span><span class="o">=</span><span class="s2">&quot;C&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="n">f</span><span class="s2">&quot;slack[</span><span class="si">{k}</span><span class="s2">,</span><span class="si">{p}</span><span class="s2">]&quot;</span><span class="p">)</span>
+            
+    <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">dc</span><span class="p">:</span>
+        <span class="n">y</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">addVar</span><span class="p">(</span><span class="n">vtype</span><span class="o">=</span><span class="s1">&#39;B&#39;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="n">f</span><span class="s1">&#39;y[</span><span class="si">{j}</span><span class="s1">]&#39;</span><span class="p">)</span>
+            
+    <span class="n">model</span><span class="o">.</span><span class="n">update</span><span class="p">()</span>
+     
+     
+    <span class="n">Cust_Demand_Cons</span><span class="p">,</span> <span class="n">DC_Flow_Cons</span><span class="p">,</span> <span class="n">DC_Strong_Cons</span><span class="p">,</span> <span class="n">DC_UB_Cons</span><span class="p">,</span> <span class="n">DC_LB_Cons</span><span class="p">,</span> <span class="n">Plnt_UB_Cons</span> <span class="o">=</span> <span class="p">{},</span> <span class="p">{},</span> <span class="p">{},</span> <span class="p">{},</span> <span class="p">{},</span> <span class="p">{}</span>
+     
+    <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">tqdm</span><span class="p">(</span><span class="n">cust</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">prod</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">demand</span><span class="p">[</span><span class="n">k</span><span class="p">,</span><span class="n">p</span><span class="p">]</span><span class="o">&gt;</span><span class="mf">0.</span><span class="p">:</span>
+                <span class="n">Cust_Demand_Cons</span><span class="p">[</span><span class="n">k</span><span class="p">,</span><span class="n">p</span><span class="p">]</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">addConstr</span><span class="p">(</span>
+                    <span class="n">quicksum</span><span class="p">(</span><span class="n">x</span><span class="p">[</span><span class="n">j</span><span class="p">,</span><span class="n">k</span><span class="p">,</span><span class="n">p</span><span class="p">]</span> <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">dc</span> <span class="k">if</span> <span class="p">(</span><span class="n">j</span><span class="p">,</span><span class="n">k</span><span class="p">,</span><span class="n">p</span><span class="p">)</span> <span class="ow">in</span> <span class="n">dc_to_cust</span><span class="p">)</span>  <span class="o">+</span> <span class="n">slack</span><span class="p">[</span><span class="n">k</span><span class="p">,</span><span class="n">p</span><span class="p">]</span>
+                    <span class="o">==</span>
+                    <span class="n">demand</span><span class="p">[</span><span class="n">k</span><span class="p">,</span><span class="n">p</span><span class="p">],</span>
+                    <span class="n">name</span><span class="o">=</span><span class="n">f</span><span class="s1">&#39;Cust_Demand_Cons[</span><span class="si">{k}</span><span class="s1">,</span><span class="si">{p}</span><span class="s1">]&#39;</span>
+                <span class="p">)</span>
+    <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">tqdm</span><span class="p">(</span><span class="n">dc</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">prod</span><span class="p">:</span>
+            <span class="n">DC_Flow_Cons</span><span class="p">[</span><span class="n">j</span><span class="p">,</span><span class="n">p</span><span class="p">]</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">addConstr</span><span class="p">(</span>
+                <span class="n">quicksum</span><span class="p">(</span><span class="n">x</span><span class="p">[</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">p</span><span class="p">]</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">plnt</span> <span class="k">if</span> <span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">p</span><span class="p">)</span> <span class="ow">in</span> <span class="n">plnt_to_dc</span><span class="p">)</span>
+                <span class="o">==</span>
+                <span class="n">quicksum</span><span class="p">(</span><span class="n">x</span><span class="p">[</span><span class="n">j</span><span class="p">,</span><span class="n">k</span><span class="p">,</span><span class="n">p</span><span class="p">]</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">cust</span> <span class="k">if</span> <span class="p">(</span><span class="n">j</span><span class="p">,</span><span class="n">k</span><span class="p">,</span><span class="n">p</span><span class="p">)</span> <span class="ow">in</span> <span class="n">dc_to_cust</span><span class="p">),</span>
+                <span class="n">name</span><span class="o">=</span><span class="n">f</span><span class="s1">&#39;DC_Flow_Cons[</span><span class="si">{j}</span><span class="s1">,</span><span class="si">{p}</span><span class="s1">]&#39;</span>
+            <span class="p">)</span>        
+    <span class="k">for</span> <span class="p">(</span><span class="n">j</span><span class="p">,</span><span class="n">k</span><span class="p">,</span><span class="n">p</span><span class="p">)</span> <span class="ow">in</span> <span class="n">dc_to_cust</span><span class="p">:</span>
+        <span class="n">DC_Strong_Cons</span><span class="p">[</span><span class="n">j</span><span class="p">,</span><span class="n">k</span><span class="p">,</span><span class="n">p</span><span class="p">]</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">addConstr</span><span class="p">(</span>
+            <span class="n">x</span><span class="p">[</span><span class="n">j</span><span class="p">,</span><span class="n">k</span><span class="p">,</span><span class="n">p</span><span class="p">]</span>
+            <span class="o">&lt;=</span>
+            <span class="n">demand</span><span class="p">[</span><span class="n">k</span><span class="p">,</span><span class="n">p</span><span class="p">]</span> <span class="o">*</span> <span class="n">y</span><span class="p">[</span><span class="n">j</span><span class="p">],</span>
+            <span class="n">name</span><span class="o">=</span><span class="n">f</span><span class="s1">&#39;DC_Strong_Cons[</span><span class="si">{j}</span><span class="s1">,</span><span class="si">{k}</span><span class="s1">,</span><span class="si">{p}</span><span class="s1">]&#39;</span>
+        <span class="p">)</span>
+            
+    <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">tqdm</span><span class="p">(</span><span class="n">dc</span><span class="p">):</span>
+        <span class="n">DC_UB_Cons</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">addConstr</span><span class="p">(</span>
+            <span class="n">dc_ub</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="o">*</span> <span class="n">y</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+            <span class="o">&gt;=</span>
+            <span class="n">quicksum</span><span class="p">(</span><span class="n">x</span><span class="p">[</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">p</span><span class="p">]</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">plnt</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">prod</span> <span class="k">if</span> <span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">p</span><span class="p">)</span> <span class="ow">in</span> <span class="n">plnt_to_dc</span><span class="p">),</span>
+            <span class="n">name</span><span class="o">=</span><span class="n">f</span><span class="s1">&#39;DC_UB_Cons[</span><span class="si">{j}</span><span class="s1">]&#39;</span>
+        <span class="p">)</span>
+     
+    <span class="c1"># for j in tqdm(dc):</span>
+    <span class="c1">#     DC_LB_Cons[j] = model.addConstr(</span>
+    <span class="c1">#         dc_lb[j] * y[j]</span>
+    <span class="c1">#         &lt;=</span>
+    <span class="c1">#         quicksum(x[i,j,p] for i in plnt for p o prod if (i,j,p) in plnt_to_dc),</span>
+    <span class="c1">#         name=f&#39;DC_LB_Cons[{j}]&#39;</span>
+    <span class="c1">#     )</span>
+        
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">tqdm</span><span class="p">(</span><span class="n">plnt</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">prod</span><span class="p">:</span>
+            <span class="n">Plnt_UB_Cons</span><span class="p">[</span><span class="n">i</span><span class="p">,</span><span class="n">p</span><span class="p">]</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">addConstr</span><span class="p">(</span>
+                <span class="n">plnt_ub</span><span class="p">[</span><span class="n">i</span><span class="p">,</span><span class="n">p</span><span class="p">]</span>
+                <span class="o">&gt;=</span>
+                <span class="n">quicksum</span><span class="p">(</span><span class="n">x</span><span class="p">[</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">p</span><span class="p">]</span> <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">dc</span> <span class="k">if</span> <span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">p</span><span class="p">)</span> <span class="ow">in</span> <span class="n">plnt_to_dc</span><span class="p">),</span>
+                <span class="n">name</span><span class="o">=</span><span class="n">f</span><span class="s1">&#39;Plnt_UB_Cons[</span><span class="si">{i}</span><span class="s1">,</span><span class="si">{p}</span><span class="s1">]&#39;</span>
+            <span class="p">)</span>
+            
+    <span class="n">DC_Num_Cons</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">addConstr</span><span class="p">(</span>
+        <span class="n">quicksum</span><span class="p">(</span><span class="n">y</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">dc</span><span class="p">)</span>
+        <span class="o">&lt;=</span>
+        <span class="n">dc_num</span><span class="p">,</span>
+        <span class="n">name</span><span class="o">=</span><span class="s1">&#39;DC_Num_Cons&#39;</span>
+    <span class="p">)</span>
+        
+    <span class="n">model</span><span class="o">.</span><span class="n">update</span><span class="p">()</span>
+     
+    <span class="n">model</span><span class="o">.</span><span class="n">setObjective</span><span class="p">(</span>
+        <span class="n">quicksum</span><span class="p">(</span><span class="n">weight</span><span class="p">[</span><span class="n">p</span><span class="p">]</span> <span class="o">*</span> <span class="n">tp_cost</span><span class="p">[</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">]</span> <span class="o">*</span> <span class="n">x</span><span class="p">[</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">p</span><span class="p">]</span> <span class="k">for</span> <span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">p</span><span class="p">)</span> <span class="ow">in</span> <span class="n">plnt_to_dc</span><span class="p">)</span>  <span class="o">+</span>
+        <span class="n">quicksum</span><span class="p">(</span><span class="n">weight</span><span class="p">[</span><span class="n">p</span><span class="p">]</span> <span class="o">*</span> <span class="n">del_cost</span><span class="p">[</span><span class="n">j</span><span class="p">,</span><span class="n">k</span><span class="p">]</span> <span class="o">*</span> <span class="n">x</span><span class="p">[</span><span class="n">j</span><span class="p">,</span><span class="n">k</span><span class="p">,</span><span class="n">p</span><span class="p">]</span> <span class="k">for</span> <span class="p">(</span><span class="n">j</span><span class="p">,</span><span class="n">k</span><span class="p">,</span><span class="n">p</span><span class="p">)</span> <span class="ow">in</span> <span class="n">dc_to_cust</span><span class="p">)</span> <span class="o">+</span>
+        <span class="n">quicksum</span><span class="p">(</span><span class="n">dc_fc</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="o">*</span> <span class="n">y</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">dc</span><span class="p">)</span> <span class="o">+</span> 
+        <span class="n">quicksum</span><span class="p">(</span><span class="n">dc_vc</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="o">*</span> <span class="n">x</span><span class="p">[</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">p</span><span class="p">]</span> <span class="k">for</span> <span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">p</span><span class="p">)</span> <span class="ow">in</span> <span class="n">plnt_to_dc</span><span class="p">)</span> <span class="o">+</span>
+        <span class="n">quicksum</span><span class="p">(</span><span class="mi">999999</span><span class="o">*</span><span class="n">slack</span><span class="p">[</span><span class="n">k</span><span class="p">,</span><span class="n">p</span><span class="p">]</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">cust</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">prod</span> <span class="k">if</span> <span class="n">demand</span><span class="p">[</span><span class="n">k</span><span class="p">,</span><span class="n">p</span><span class="p">]</span><span class="o">&gt;</span><span class="mf">0.</span><span class="p">)</span>
+    <span class="p">)</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">update</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">model</span></div>
+
+
+<div class="viewcode-block" id="lnd_ss"><a class="viewcode-back" href="../generated/lnd.html#lnd.lnd_ss">[docs]</a><span class="k">def</span> <span class="nf">lnd_ss</span><span class="p">(</span><span class="n">weight</span><span class="p">,</span> <span class="n">cust</span><span class="p">,</span> <span class="n">dc</span><span class="p">,</span> <span class="n">dc_lb</span><span class="p">,</span> <span class="n">dc_ub</span><span class="p">,</span> <span class="n">plnt</span><span class="p">,</span> <span class="n">plnt_ub</span><span class="p">,</span> <span class="n">demand</span><span class="p">,</span> <span class="n">tp_cost</span><span class="p">,</span> <span class="n">del_cost</span><span class="p">,</span> <span class="n">dc_fc</span><span class="p">,</span> <span class="n">dc_vc</span><span class="p">,</span> <span class="n">dc_num</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Logistics network design, single source</span>
+
+<span class="sd">    Gurobi model for single-source LND</span>
+
+<span class="sd">    :rtype: object of class `Model`, as defined in `gurobipy`</span>
+<span class="sd">    :weight: weight[p] -&gt; unit weight for product `p`</span>
+<span class="sd">    :cust: dict associating a customer id to its location as (latitute, longitude)</span>
+<span class="sd">    :dc: dict associating a distribution center id to its (latitute, longitude)</span>
+<span class="sd">    :dc_lb: dc_lb[k] -&gt; lower bound for distribution center k [not used]</span>
+<span class="sd">    :dc_ub: dc_ub[k] -&gt; upper bound for distribution center k</span>
+<span class="sd">    :plnt: dict associating a plant id to its (latitute, longitude)</span>
+<span class="sd">    :plnt_ub: plnt_ub[k] -&gt; upper bound for plant k</span>
+<span class="sd">    :demand: demand[k,p] -&gt; units of `p` demanded by customer `k`</span>
+<span class="sd">    :tp_cost: unit transportation cost (from the plant)</span>
+<span class="sd">    :del_cost: unit delivery cost (from a dc)</span>
+<span class="sd">    :dc_fc: fixed cost for opening a dc</span>
+<span class="sd">    :dc_vc: unit (variable) cost for operating a dc</span>
+<span class="sd">    :dc_num: (maximum) number of distribution centers to open</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">prod</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">weight</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
+    <span class="n">plnt_to_dc</span> <span class="o">=</span> <span class="p">[(</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">p</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">plnt</span> <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">dc</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">prod</span> <span class="k">if</span> <span class="n">plnt_ub</span><span class="o">.</span><span class="n">get</span><span class="p">((</span><span class="n">i</span><span class="p">,</span><span class="n">p</span><span class="p">),</span><span class="mi">0</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">]</span>
+    <span class="n">dc_to_cust</span> <span class="o">=</span> <span class="p">[(</span><span class="n">j</span><span class="p">,</span><span class="n">k</span><span class="p">,</span><span class="n">p</span><span class="p">)</span> <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">dc</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">cust</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">prod</span> <span class="k">if</span> <span class="n">demand</span><span class="p">[</span><span class="n">k</span><span class="p">,</span><span class="n">p</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">model</span> <span class="o">=</span> <span class="n">Model</span><span class="p">()</span>
+    <span class="n">x</span><span class="p">,</span><span class="n">y</span> <span class="o">=</span> <span class="p">{},</span> <span class="p">{}</span>
+    <span class="n">z</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">p</span><span class="p">)</span> <span class="ow">in</span> <span class="n">plnt_to_dc</span><span class="p">:</span>
+        <span class="n">x</span><span class="p">[</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">p</span><span class="p">]</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">addVar</span><span class="p">(</span><span class="n">vtype</span><span class="o">=</span><span class="s1">&#39;C&#39;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="n">f</span><span class="s1">&#39;x[</span><span class="si">{i}</span><span class="s1">,</span><span class="si">{j}</span><span class="s1">,</span><span class="si">{p}</span><span class="s1">]&#39;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">dc</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">cust</span><span class="p">:</span>
+            <span class="n">z</span><span class="p">[</span><span class="n">j</span><span class="p">,</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">addVar</span><span class="p">(</span><span class="n">vtype</span><span class="o">=</span><span class="s2">&quot;B&quot;</span><span class="p">,</span><span class="n">name</span><span class="o">=</span><span class="n">f</span><span class="s2">&quot;z[</span><span class="si">{j}</span><span class="s2">,</span><span class="si">{k}</span><span class="s2">]&quot;</span><span class="p">)</span>
+                
+    <span class="n">slack</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">cust</span><span class="p">:</span>
+        <span class="n">slack</span><span class="p">[</span><span class="n">k</span><span class="p">]</span><span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">addVar</span><span class="p">(</span><span class="n">vtype</span><span class="o">=</span><span class="s2">&quot;C&quot;</span><span class="p">,</span><span class="n">name</span><span class="o">=</span><span class="n">f</span><span class="s2">&quot;slack[</span><span class="si">{k}</span><span class="s2">]&quot;</span><span class="p">)</span>
+            
+    <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">dc</span><span class="p">:</span>
+        <span class="n">y</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">addVar</span><span class="p">(</span><span class="n">vtype</span><span class="o">=</span><span class="s1">&#39;B&#39;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="n">f</span><span class="s1">&#39;y[</span><span class="si">{j}</span><span class="s1">]&#39;</span><span class="p">)</span>
+            
+    <span class="n">model</span><span class="o">.</span><span class="n">update</span><span class="p">()</span>
+     
+     
+    <span class="n">Cust_Demand_Cons</span><span class="p">,</span> <span class="n">DC_Flow_Cons</span><span class="p">,</span> <span class="n">DC_Strong_Cons</span><span class="p">,</span> <span class="n">DC_UB_Cons</span><span class="p">,</span> <span class="n">DC_LB_Cons</span><span class="p">,</span> <span class="n">Plnt_UB_Cons</span> <span class="o">=</span> <span class="p">{},</span> <span class="p">{},</span> <span class="p">{},</span> <span class="p">{},</span> <span class="p">{},</span> <span class="p">{}</span>
+     
+    <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">cust</span><span class="p">:</span>
+        <span class="n">Cust_Demand_Cons</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">addConstr</span><span class="p">(</span>
+                    <span class="n">quicksum</span><span class="p">(</span><span class="n">z</span><span class="p">[</span><span class="n">j</span><span class="p">,</span><span class="n">k</span><span class="p">]</span> <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">dc</span><span class="p">)</span> <span class="o">+</span><span class="n">slack</span><span class="p">[</span><span class="n">k</span><span class="p">]</span>
+                    <span class="o">==</span> <span class="mi">1</span><span class="p">,</span>
+                    <span class="n">name</span><span class="o">=</span><span class="n">f</span><span class="s1">&#39;Cust_Demand_Cons[</span><span class="si">{k}</span><span class="s1">]&#39;</span>
+        <span class="p">)</span>
+    <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">dc</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">prod</span><span class="p">:</span>
+            <span class="n">DC_Flow_Cons</span><span class="p">[</span><span class="n">j</span><span class="p">,</span><span class="n">p</span><span class="p">]</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">addConstr</span><span class="p">(</span>
+                <span class="n">quicksum</span><span class="p">(</span><span class="n">x</span><span class="p">[</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">p</span><span class="p">]</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">plnt</span> <span class="k">if</span> <span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">p</span><span class="p">)</span> <span class="ow">in</span> <span class="n">plnt_to_dc</span><span class="p">)</span>
+                <span class="o">==</span>
+                <span class="n">quicksum</span><span class="p">(</span>  <span class="n">demand</span><span class="p">[</span><span class="n">k</span><span class="p">,</span><span class="n">p</span><span class="p">]</span><span class="o">*</span><span class="n">z</span><span class="p">[</span><span class="n">j</span><span class="p">,</span><span class="n">k</span><span class="p">]</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">cust</span><span class="p">),</span>
+                <span class="n">name</span><span class="o">=</span><span class="n">f</span><span class="s1">&#39;DC_Flow_Cons[</span><span class="si">{j}</span><span class="s1">,</span><span class="si">{p}</span><span class="s1">]&#39;</span>
+            <span class="p">)</span>
+    
+    <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">dc</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">cust</span><span class="p">:</span>
+            <span class="n">DC_Strong_Cons</span><span class="p">[</span><span class="n">j</span><span class="p">,</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">addConstr</span><span class="p">(</span>
+                    <span class="n">z</span><span class="p">[</span><span class="n">j</span><span class="p">,</span><span class="n">k</span><span class="p">]</span>
+                    <span class="o">&lt;=</span>
+                    <span class="n">y</span><span class="p">[</span><span class="n">j</span><span class="p">],</span>
+                    <span class="n">name</span><span class="o">=</span><span class="n">f</span><span class="s1">&#39;DC_Strong_Cons[</span><span class="si">{j}</span><span class="s1">,</span><span class="si">{k}</span><span class="s1">]&#39;</span>
+                <span class="p">)</span>
+            
+    <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">tqdm</span><span class="p">(</span><span class="n">dc</span><span class="p">):</span>
+        <span class="n">DC_UB_Cons</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">addConstr</span><span class="p">(</span>
+            <span class="n">dc_ub</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="o">*</span> <span class="n">y</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+            <span class="o">&gt;=</span>
+            <span class="n">quicksum</span><span class="p">(</span><span class="n">x</span><span class="p">[</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">p</span><span class="p">]</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">plnt</span> <span class="k">if</span> <span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">p</span><span class="p">)</span> <span class="ow">in</span> <span class="n">plnt_to_dc</span><span class="p">),</span>
+            <span class="n">name</span><span class="o">=</span><span class="n">f</span><span class="s1">&#39;DC_UB_Cons[</span><span class="si">{j}</span><span class="s1">]&#39;</span>
+        <span class="p">)</span>
+     
+    <span class="c1"># for j in tqdm(dc):</span>
+    <span class="c1">#    DC_LB_Cons[j] = model.addConstr(</span>
+    <span class="c1">#        dc_lb[j] * y[j]</span>
+    <span class="c1">#        &lt;=</span>
+    <span class="c1">#        quicksum(x[i,j,p] for i in plnt if (i,j,p) in plnt_to_dc),</span>
+    <span class="c1">#        name=f&#39;DC_LB_Cons[{j}]&#39;</span>
+    <span class="c1">#   )</span>
+        
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">tqdm</span><span class="p">(</span><span class="n">plnt</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">prod</span><span class="p">:</span>
+            <span class="n">Plnt_UB_Cons</span><span class="p">[</span><span class="n">i</span><span class="p">,</span><span class="n">p</span><span class="p">]</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">addConstr</span><span class="p">(</span>
+                <span class="n">plnt_ub</span><span class="p">[</span><span class="n">i</span><span class="p">,</span><span class="n">p</span><span class="p">]</span>
+                <span class="o">&gt;=</span>
+                <span class="n">quicksum</span><span class="p">(</span><span class="n">x</span><span class="p">[</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">p</span><span class="p">]</span> <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">dc</span> <span class="k">if</span> <span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">p</span><span class="p">)</span> <span class="ow">in</span> <span class="n">plnt_to_dc</span><span class="p">),</span>
+                <span class="n">name</span><span class="o">=</span><span class="n">f</span><span class="s1">&#39;Plnt_UB_Cons[</span><span class="si">{i}</span><span class="s1">,</span><span class="si">{p}</span><span class="s1">]&#39;</span>
+            <span class="p">)</span>
+            
+    <span class="n">DC_Num_Cons</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">addConstr</span><span class="p">(</span>
+        <span class="n">quicksum</span><span class="p">(</span><span class="n">y</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">dc</span><span class="p">)</span>
+        <span class="o">&lt;=</span>
+        <span class="n">dc_num</span><span class="p">,</span>
+        <span class="n">name</span><span class="o">=</span><span class="s1">&#39;DC_Num_Cons&#39;</span>
+    <span class="p">)</span>
+        
+    <span class="n">model</span><span class="o">.</span><span class="n">update</span><span class="p">()</span>
+     
+    <span class="n">total_demand</span> <span class="o">=</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span><span class="nb">sum</span><span class="p">(</span><span class="n">demand</span><span class="p">[</span><span class="n">k</span><span class="p">,</span><span class="n">p</span><span class="p">]</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">prod</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">cust</span><span class="p">}</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">setObjective</span><span class="p">(</span>
+        <span class="n">quicksum</span><span class="p">(</span><span class="n">weight</span><span class="p">[</span><span class="n">p</span><span class="p">]</span> <span class="o">*</span> <span class="n">tp_cost</span><span class="p">[</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">]</span> <span class="o">*</span> <span class="n">x</span><span class="p">[</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">p</span><span class="p">]</span> <span class="k">for</span> <span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">p</span><span class="p">)</span> <span class="ow">in</span> <span class="n">plnt_to_dc</span><span class="p">)</span>  <span class="o">+</span>
+        <span class="n">quicksum</span><span class="p">(</span><span class="n">weight</span><span class="p">[</span><span class="n">p</span><span class="p">]</span> <span class="o">*</span> <span class="n">del_cost</span><span class="p">[</span><span class="n">j</span><span class="p">,</span><span class="n">k</span><span class="p">]</span> <span class="o">*</span> <span class="n">total_demand</span><span class="p">[</span><span class="n">k</span><span class="p">]</span><span class="o">*</span> <span class="n">z</span><span class="p">[</span><span class="n">j</span><span class="p">,</span><span class="n">k</span><span class="p">]</span> <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">dc</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">cust</span><span class="p">)</span> <span class="o">+</span>
+        <span class="n">quicksum</span><span class="p">(</span><span class="n">dc_fc</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="o">*</span> <span class="n">y</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">dc</span><span class="p">)</span> <span class="o">+</span> 
+        <span class="n">quicksum</span><span class="p">(</span><span class="n">dc_vc</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="o">*</span> <span class="n">x</span><span class="p">[</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">p</span><span class="p">]</span> <span class="k">for</span> <span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">p</span><span class="p">)</span> <span class="ow">in</span> <span class="n">plnt_to_dc</span><span class="p">)</span> <span class="o">+</span>
+        <span class="n">quicksum</span><span class="p">(</span><span class="mi">99999999</span><span class="o">*</span><span class="n">slack</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">cust</span><span class="p">)</span>
+    <span class="p">)</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">update</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">model</span></div>
+
+
+
+<div class="viewcode-block" id="mk_costs"><a class="viewcode-back" href="../generated/lnd.html#lnd.mk_costs">[docs]</a><span class="k">def</span> <span class="nf">mk_costs</span><span class="p">(</span><span class="n">plnt</span><span class="p">,</span> <span class="n">dc</span><span class="p">,</span> <span class="n">cust</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Instantiate costs to a given set of plants, dc&#39;s and customers</span>
+
+<span class="sd">    To be adpted to more realistic settings</span>
+
+<span class="sd">    :rtype: tuple with transportation costs</span>
+<span class="sd">    :plnt: dict associating a plant id to its (latitute, longitude)</span>
+<span class="sd">    :dc: dict associating a distribution center id to its (latitute, longitude)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">unit_tp_cost</span> <span class="o">=</span> <span class="mi">1</span> <span class="c1">#  transportation cost (from the plant)</span>
+    <span class="n">unit_del_cost</span> <span class="o">=</span> <span class="mi">10</span> <span class="c1">#  delivery cost (from a dc)</span>
+    <span class="n">unit_dc_fc</span> <span class="o">=</span> <span class="mi">1000</span> <span class="c1"># fixed cost for opening a dc</span>
+    <span class="n">unit_dc_vc</span> <span class="o">=</span> <span class="mi">1</span> <span class="c1">#  variable cost for operating a dc</span>
+    <span class="n">tp_cost</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">plnt</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">dc</span><span class="p">:</span>
+            <span class="n">tp_cost</span><span class="p">[</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">unit_tp_cost</span> <span class="o">*</span> <span class="n">distance</span><span class="p">(</span><span class="n">plnt</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">dc</span><span class="p">[</span><span class="n">j</span><span class="p">])</span><span class="o">.</span><span class="n">kilometers</span>
+    <span class="n">del_cost</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="n">dc_fc</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="n">dc_vc</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">dc</span><span class="p">:</span>
+        <span class="n">dc_fc</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">unit_dc_fc</span>
+        <span class="n">dc_vc</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">unit_dc_vc</span>
+        <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">cust</span><span class="p">:</span>
+            <span class="n">del_cost</span><span class="p">[</span><span class="n">j</span><span class="p">,</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">unit_del_cost</span> <span class="o">*</span> <span class="n">distance</span><span class="p">(</span><span class="n">dc</span><span class="p">[</span><span class="n">j</span><span class="p">],</span> <span class="n">cust</span><span class="p">[</span><span class="n">k</span><span class="p">])</span><span class="o">.</span><span class="n">kilometers</span>
+    <span class="k">return</span> <span class="n">tp_cost</span><span class="p">,</span> <span class="n">del_cost</span><span class="p">,</span> <span class="n">dc_fc</span><span class="p">,</span> <span class="n">dc_vc</span></div>
+
+
+
+
+<div class="viewcode-block" id="TestSolving"><a class="viewcode-back" href="../generated/lnd.html#lnd.TestSolving">[docs]</a><span class="k">class</span> <span class="nc">TestSolving</span><span class="p">(</span><span class="n">unittest</span><span class="o">.</span><span class="n">TestCase</span><span class="p">):</span>
+<div class="viewcode-block" id="TestSolving.test_one"><a class="viewcode-back" href="../generated/lnd.html#lnd.TestSolving.test_one">[docs]</a>    <span class="k">def</span> <span class="nf">test_one</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Test optimizing the location of a small number of dc&#39;s from set of candidates</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">TIME_LIM</span> <span class="o">=</span> <span class="mi">300</span> <span class="c1"># allow gurobi to use 5 minutes</span>
+        <span class="kn">import</span> <span class="nn">time</span>
+        <span class="kn">from</span> <span class="nn">mk_instances</span> <span class="k">import</span> <span class="n">mk_instances</span>
+        <span class="kn">from</span> <span class="nn">clustering</span> <span class="k">import</span> <span class="n">preclustering</span>
+
+        <span class="n">models</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;multiple source&quot;</span><span class="p">:</span><span class="n">lnd_ms</span><span class="p">,</span>
+            <span class="s2">&quot;single source&quot;</span><span class="p">:</span><span class="n">lnd_ss</span>
+            <span class="p">}</span>
+
+        <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">models</span><span class="p">:</span>
+            <span class="k">for</span> <span class="p">(</span><span class="n">weight</span><span class="p">,</span> <span class="n">cust</span><span class="p">,</span> <span class="n">plnt</span><span class="p">,</span> <span class="n">dc</span><span class="p">,</span> <span class="n">dc_lb</span><span class="p">,</span> <span class="n">dc_ub</span><span class="p">,</span> <span class="n">demand</span><span class="p">,</span> <span class="n">plnt_ub</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span> <span class="ow">in</span> <span class="n">mk_instances</span><span class="p">():</span>
+                <span class="nb">print</span><span class="p">(</span><span class="n">f</span><span class="s2">&quot;* using </span><span class="si">{k}</span><span class="s2"> model *&quot;</span><span class="p">)</span>
+                <span class="nb">print</span><span class="p">(</span><span class="n">f</span><span class="s2">&quot;*** new instance, {len(plnt)} plants + {len(dc)} dc&#39;s + {len(cust)} customers ***&quot;</span><span class="p">)</span>
+                <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">process_time</span><span class="p">()</span>
+                <span class="p">(</span><span class="n">tp_cost</span><span class="p">,</span> <span class="n">del_cost</span><span class="p">,</span> <span class="n">dc_fc</span><span class="p">,</span> <span class="n">dc_vc</span><span class="p">)</span> <span class="o">=</span> <span class="n">mk_costs</span><span class="p">(</span><span class="n">plnt</span><span class="p">,</span> <span class="n">dc</span><span class="p">,</span> <span class="n">cust</span><span class="p">)</span>
+                <span class="n">dc_num</span> <span class="o">=</span> <span class="p">(</span><span class="mi">20</span> <span class="o">+</span> <span class="nb">len</span><span class="p">(</span><span class="n">dc</span><span class="p">))</span><span class="o">//</span><span class="mi">10</span>
+             
+                <span class="n">model</span> <span class="o">=</span> <span class="n">models</span><span class="p">[</span><span class="n">k</span><span class="p">](</span><span class="n">weight</span><span class="p">,</span> <span class="n">cust</span><span class="p">,</span> <span class="n">dc</span><span class="p">,</span> <span class="n">dc_lb</span><span class="p">,</span> <span class="n">dc_ub</span><span class="p">,</span> <span class="n">plnt</span><span class="p">,</span> <span class="n">plnt_ub</span><span class="p">,</span> 
+                                  <span class="n">demand</span><span class="p">,</span> <span class="n">tp_cost</span><span class="p">,</span> <span class="n">del_cost</span><span class="p">,</span> <span class="n">dc_fc</span><span class="p">,</span> <span class="n">dc_vc</span><span class="p">,</span> <span class="n">dc_num</span><span class="p">)</span>
+                <span class="c1"># model.write(&quot;lnd_ss.lp&quot;)</span>
+                <span class="n">model</span><span class="o">.</span><span class="n">setParam</span><span class="p">(</span><span class="s1">&#39;TimeLimit&#39;</span><span class="p">,</span> <span class="n">TIME_LIM</span><span class="p">)</span>
+                <span class="n">model</span><span class="o">.</span><span class="n">optimize</span><span class="p">()</span>
+             
+                <span class="n">EPS</span> <span class="o">=</span> <span class="mf">1.e-6</span>
+                <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">getVars</span><span class="p">():</span>
+                    <span class="k">if</span> <span class="n">x</span><span class="o">.</span><span class="n">X</span> <span class="o">&gt;</span> <span class="n">EPS</span><span class="p">:</span>
+                        <span class="nb">print</span><span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">varName</span><span class="p">,</span> <span class="n">x</span><span class="o">.</span><span class="n">X</span><span class="p">)</span>
+             
+                <span class="n">end</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">process_time</span><span class="p">()</span>
+                <span class="nb">print</span><span class="p">(</span><span class="n">f</span><span class="s2">&quot;solving MIP used {end-start} seconds&quot;</span><span class="p">)</span>
+                <span class="nb">print</span><span class="p">()</span></div></div>
+
+            
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">&#39;__main__&#39;</span><span class="p">:</span>
+    <span class="n">unittest</span><span class="o">.</span><span class="n">main</span><span class="p">()</span>
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../index.html">Logistics Network Design</a></h1>
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+<p class="caption"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../autoapi/index.html">API Reference</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../index.html">Documentation overview</a><ul>
+  <li><a href="index.html">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" />
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2019, Joao Pedro Pedroso and Mikio Kubo.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 2.2.0</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.12</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>

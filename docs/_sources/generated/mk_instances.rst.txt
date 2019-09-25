@@ -1,0 +1,30 @@
+mk\_instances
+=============
+
+.. automodule:: mk_instances
+
+   
+   
+   .. rubric:: Functions
+
+   .. autosummary::
+   
+      mk_instance
+      mk_instances
+      sample_locations
+   
+   
+
+   
+   
+   .. rubric:: Classes
+
+   .. autosummary::
+   
+      TestInstances
+   
+   
+
+   
+   
+   

@@ -1,0 +1,28 @@
+clustering
+==========
+
+.. automodule:: clustering
+
+   
+   
+   .. rubric:: Functions
+
+   .. autosummary::
+   
+      preclustering
+   
+   
+
+   
+   
+   .. rubric:: Classes
+
+   .. autosummary::
+   
+      TestClustering
+   
+   
+
+   
+   
+   

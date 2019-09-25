@@ -1,0 +1,43 @@
+.. Logistics Network Design documentation master file, created by
+   sphinx-quickstart on Wed Sep 25 18:09:48 2019.
+   You can adapt this file completely to your liking, but it should at least
+   contain the root `toctree` directive.
+
+Welcome to Logistics Network Design's documentation!
+====================================================
+
+|
+
+solve_lnd: Main example for testing logistics network design optimizer
+
+This program illustrates how to use the optimization model implemented
+in module `lnd.py`, with potential places for distribution centers
+being pre-clustered by the method implemented in `clustering.py`.
+
+The source code is available `here <https://github.com/joaopedroso/lnd_kaiyodai>`_.
+
+|
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Contents:
+
+.. autosummary:: 
+   :toctree: generated
+
+..   solve_lnd
+..   clustering
+..   lnd
+..   mk_instances
+
+
+Indices and tables
+==================
+
+* :ref:`genindex`
+* :ref:`modindex`
+* :ref:`search`
+
+|
+
+This documentation was last updated on |today|.

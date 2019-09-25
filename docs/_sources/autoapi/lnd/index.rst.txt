@@ -1,0 +1,96 @@
+:mod:`lnd`
+==========
+
+.. py:module:: lnd
+
+.. autoapi-nested-parse::
+
+   lnd: Gurobi models for logistic network design
+
+   There are two models:
+
+     - lnd_ms, for multiple-source supply
+     - lnd_ss, for single-source supply
+
+   The aim is to select a predefined number of places for implementing
+   a distribution center.  Data are: 
+
+     - customer locations
+     - potential distribution center locations
+     - plant locations
+     - demand, bounds and costs
+
+   See `TestSolving` below for examples of usage.
+
+
+
+Module Contents
+---------------
+
+.. function:: lnd_ms(weight, cust, dc, dc_lb, dc_ub, plnt, plnt_ub, demand, tp_cost, del_cost, dc_fc, dc_vc, dc_num)
+
+   Logistics network design, multiple source
+
+   Gurobi model for multiple-source LND
+
+   :rtype: object of class `Model`, as defined in `gurobipy`
+   :weight: weight[p] -> unit weight for product `p`
+   :cust: dict associating a customer id to its location as (latitute, longitude)
+   :dc: dict associating a distribution center id to its (latitute, longitude)
+   :dc_lb: dc_lb[k] -> lower bound for distribution center k [not used]
+   :dc_ub: dc_ub[k] -> upper bound for distribution center k
+   :plnt: dict associating a plant id to its (latitute, longitude)
+   :plnt_ub: plnt_ub[k] -> upper bound for plant k
+   :demand: demand[k,p] -> units of `p` demanded by customer `k`
+   :tp_cost: unit transportation cost (from the plant)
+   :del_cost: unit delivery cost (from a dc)
+   :dc_fc: fixed cost for opening a dc
+   :dc_vc: unit (variable) cost for operating a dc
+   :dc_num: (maximum) number of distribution centers to open
+
+
+.. function:: lnd_ss(weight, cust, dc, dc_lb, dc_ub, plnt, plnt_ub, demand, tp_cost, del_cost, dc_fc, dc_vc, dc_num)
+
+   Logistics network design, single source
+
+   Gurobi model for single-source LND
+
+   :rtype: object of class `Model`, as defined in `gurobipy`
+   :weight: weight[p] -> unit weight for product `p`
+   :cust: dict associating a customer id to its location as (latitute, longitude)
+   :dc: dict associating a distribution center id to its (latitute, longitude)
+   :dc_lb: dc_lb[k] -> lower bound for distribution center k [not used]
+   :dc_ub: dc_ub[k] -> upper bound for distribution center k
+   :plnt: dict associating a plant id to its (latitute, longitude)
+   :plnt_ub: plnt_ub[k] -> upper bound for plant k
+   :demand: demand[k,p] -> units of `p` demanded by customer `k`
+   :tp_cost: unit transportation cost (from the plant)
+   :del_cost: unit delivery cost (from a dc)
+   :dc_fc: fixed cost for opening a dc
+   :dc_vc: unit (variable) cost for operating a dc
+   :dc_num: (maximum) number of distribution centers to open
+
+
+.. function:: mk_costs(plnt, dc, cust)
+
+   Instantiate costs to a given set of plants, dc's and customers
+
+   To be adpted to more realistic settings
+
+   :rtype: tuple with transportation costs
+   :plnt: dict associating a plant id to its (latitute, longitude)
+   :dc: dict associating a distribution center id to its (latitute, longitude)
+
+
+.. py:class:: TestSolving
+
+   Bases: :class:`unittest.TestCase`
+
+   
+   .. method:: test_one(self)
+
+      Test optimizing the location of a small number of dc's from set of candidates
+
+
+
+
