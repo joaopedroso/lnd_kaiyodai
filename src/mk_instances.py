@@ -54,7 +54,7 @@ def mk_instance(df, n_plants, n_dcs, n_custs, seed, n_prods):
 
 
 def mk_instances():
-    df = pd.read_csv("data/zipcode.csv.gz",index_col="zip")
+    df = pd.read_csv("../data/zipcode.csv.gz",index_col="zip")
     n_plants = 3
     n_prods = 5
     seeds = range(1,11)
@@ -70,7 +70,7 @@ def mk_instances():
 
 class TestInstances(unittest.TestCase):
     def test_one(self):
-        df = pd.read_csv("data/zipcode.csv.gz",index_col="zip")
+        df = pd.read_csv("../data/zipcode.csv.gz",index_col="zip")
         for n in [10, 100, 1000]:
             print(f"testing location sample, n:{n}")
             for seed in range(1,11):
