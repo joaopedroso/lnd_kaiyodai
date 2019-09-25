@@ -3,6 +3,7 @@ clustering: Use scikit-learn models for clustering a set of distribution centers
 
 The aim is to select a predefined number of *candidates* for implementing
 a distribution center.  Data are: 
+
   - number of candidates to select
   - customer locations
   - potential distribution center locations

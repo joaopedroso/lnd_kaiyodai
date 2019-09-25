@@ -2,11 +2,13 @@
 lnd: Gurobi models for logistic network design
 
 There are two models:
+
   - lnd_ms, for multiple-source supply
   - lnd_ss, for single-source supply
 
 The aim is to select a predefined number of places for implementing
 a distribution center.  Data are: 
+
   - customer locations
   - potential distribution center locations
   - plant locations
