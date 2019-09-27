@@ -47,12 +47,12 @@ def lnd_ms(weight, cust, dc, dc_lb, dc_ub, plnt, plnt_ub, demand, tp_cost, del_c
     :dc_num: (maximum) number of distribution centers to open
     """
     prod = set(weight.keys())
-    plnt_to_dc = [(i,j,p) for i in plnt for j in dc for p in prod if plnt_ub.get((i,p),0) > 0]
-    dc_to_cust = [(j,k,p) for j in dc for k in cust for p in prod if demand[k,p] > 0]
+    plnt_to_dc = set((i,j,p) for i in plnt for j in dc for p in prod if plnt_ub.get((i,p),0) > 0)
+    dc_to_cust = set((j,k,p) for j in dc for k in cust for p in prod if demand[k,p] > 0)
 
     model = Model()
     x,y = {}, {}
-    for (i,j,p) in plnt_to_dc + dc_to_cust:
+    for (i,j,p) in plnt_to_dc | dc_to_cust:
         x[i,j,p] = model.addVar(vtype='C', name=f'x[{i},{j},{p}]')
      
     slack = {}
@@ -160,8 +160,8 @@ def lnd_ss(weight, cust, dc, dc_lb, dc_ub, plnt, plnt_ub, demand, tp_cost, del_c
     :dc_num: (maximum) number of distribution centers to open
     """
     prod = set(weight.keys())
-    plnt_to_dc = [(i,j,p) for i in plnt for j in dc for p in prod if plnt_ub.get((i,p),0) > 0]
-    dc_to_cust = [(j,k,p) for j in dc for k in cust for p in prod if demand[k,p] > 0]
+    plnt_to_dc = set((i,j,p) for i in plnt for j in dc for p in prod if plnt_ub.get((i,p),0) > 0)
+    dc_to_cust = set((j,k,p) for j in dc for k in cust for p in prod if demand[k,p] > 0)
 
     model = Model()
     x,y = {}, {}

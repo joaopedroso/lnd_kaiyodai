@@ -34,25 +34,24 @@ class TestClusteringAndSolving(unittest.TestCase):
             "single source":lnd_ss
             }
 
-        for k in models:
-            for (weight, cust, plnt, dc, dc_lb, dc_ub, demand, plnt_ub, name) in mk_instances():
-                print(f"* using {k} model *")
+        for (weight, cust, plnt, dc, dc_lb, dc_ub, demand, plnt_ub, name) in mk_instances():
+            # prepare costs for optimization part
+            (tp_cost, del_cost, dc_fc, dc_vc) = mk_costs(plnt, dc, cust)
+
+            # clustering part
+            prods = weight.keys()
+            n_clusters = (10 + len(dc))//5
+            cluster_dc = preclustering(cust, dc, prods, demand, n_clusters)
+            dc = cluster_dc
+
+            # optimization part
+            start = time.process_time()
+            dc_num = (90 + len(dc))//50
+         
+            for k in models:
                 print(f"*** new instance, {len(plnt)} plants + {len(dc)} dc's + {len(cust)} customers ***")
-
-                # prepare costs for optimization part
-                (tp_cost, del_cost, dc_fc, dc_vc) = mk_costs(plnt, dc, cust)
-
-                # clustering part
-                prods = weight.keys()
-                n_clusters = (10 + len(dc))//5
-                cluster_dc = preclustering(cust, dc, prods, demand, n_clusters)
-                dc = cluster_dc
-
-                # optimization part
-                start = time.process_time()
-                dc_num = (90 + len(dc))//50
-             
                 print(f"***** dc's clustered into {len(dc)} groups, for choosing {dc_num} dc's")
+                print(f"* using {k} model *")
                 model = models[k](weight, cust, dc, dc_lb, dc_ub, plnt, plnt_ub,
                                   demand, tp_cost, del_cost, dc_fc, dc_vc, dc_num)
                 model.setParam('TimeLimit', TIME_LIM)

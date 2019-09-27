@@ -38,7 +38,7 @@ def mk_instance(df, n_plants, n_dcs, n_custs, seed, n_prods):
     locations = list(address.keys())
     dc = {z:(latitude[z],longitude[z]) for z in locations}
     dc_lb = {z:0 for z in locations}
-    dc_ub = {z:(1000+20*random.randint(1,9)*len(cust)) for z in locations}
+    dc_ub = {z:(1000+25*random.randint(1,9)*len(cust)) for z in locations}
     name.update({z:("D-" + province[z] + town[z] + address[z]) for z in locations})
 
     # plant's locations
