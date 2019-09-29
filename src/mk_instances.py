@@ -15,7 +15,7 @@ def sample_locations(df, n_locations, rnd_stat):
     return (province, town, address, latitude, longitude)
 
 
-def mk_instance(df, n_plants, n_dcs, n_custs, seed, n_prods):
+def mk_instance(df, n_plants, n_dcs, n_custs, n_prods, seed):
     random.seed(seed)
     rnd_stat = np.random.RandomState(seed=seed)
 
@@ -64,7 +64,7 @@ def mk_instances():
         for seed in seeds:
             # print(f"instance {n_custs}:{seed}")
             (weight, cust, plnt, dc, dc_lb, dc_ub, demand, plnt_ub, name) = \
-                mk_instance(df, n_plants, n_dcs, n_custs, seed, n_prods)
+                mk_instance(df, n_plants, n_dcs, n_custs, n_prods, seed)
             yield (weight, cust, plnt, dc, dc_lb, dc_ub, demand, plnt_ub, name)
 
 
