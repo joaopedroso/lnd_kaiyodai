@@ -42,17 +42,16 @@ class TestClusteringAndSolving(unittest.TestCase):
             prods = weight.keys()
             n_clusters = (10 + len(dc))//5
             cluster_dc = preclustering(cust, dc, prods, demand, n_clusters)
-            dc = cluster_dc
 
             # optimization part
             start = time.process_time()
-            dc_num = (90 + len(dc))//50
+            dc_num = (90 + len(cluster_dc))//50
          
             for k in models:
                 print(f"*** new instance, {len(plnt)} plants + {len(dc)} dc's + {len(cust)} customers ***")
-                print(f"***** dc's clustered into {len(dc)} groups, for choosing {dc_num} dc's")
+                print(f"***** dc's clustered into {len(cluster_dc)} groups, for choosing {dc_num} dc's")
                 print(f"* using {k} model *")
-                model = models[k](weight, cust, dc, dc_lb, dc_ub, plnt, plnt_ub,
+                model = models[k](weight, cust, cluster_dc, dc_lb, dc_ub, plnt, plnt_ub,
                                   demand, tp_cost, del_cost, dc_fc, dc_vc, dc_num)
                 model.setParam('TimeLimit', TIME_LIM)
                 model.optimize()
