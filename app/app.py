@@ -77,10 +77,10 @@ def solve_lnd(data, cluster_dc, dc_num, model="multiple souce"):
     model.optimize()
     # model.write("lnd.lp")
      
-    EPS = 1.e-6
-    for x in model.getVars():
-        if x.X > EPS:
-            print(x.varName, x.X)
+    # EPS = 1.e-6
+    # for x in model.getVars():
+    #     if x.X > EPS:
+    #         print(x.varName, x.X)
 
     x,y = model.__data
 
@@ -370,15 +370,15 @@ def build_instructions():
                 ],
                 className="row",
             ),
-            dcc.Dropdown(
-                id="operator-select",
-                options=[
-                    {"label": i, "value": i}
-                    for i in [1,2,3]
-                ],
-                multi=True,
-                value=[1,2],
-            ),
+            # dcc.Dropdown(
+            #     id="operator-select",
+            #     options=[
+            #         {"label": i, "value": i}
+            #         for i in [1,2,3]
+            #     ],
+            #     multi=True,
+            #     value=[1,2],
+            # ),
             html.Div(
                 html.Button("Cluster and optimize", id="update-DCs", style={'color': 'white'}),
             ),
@@ -409,7 +409,7 @@ def build_graph():
             # END
             html.Div(
                 id="ternary-map-container",
-                children="end here",
+                children="",
             ),
         ],
     )
