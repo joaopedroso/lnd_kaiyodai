@@ -40,8 +40,8 @@ def lnd_ms(weight, cust, dc, dc_lb, dc_ub, plnt, plnt_ub, demand, tp_cost, del_c
     :plnt: dict associating a plant id to its (latitute, longitude)
     :plnt_ub: plnt_ub[k] -> upper bound for plant k
     :demand: demand[k,p] -> units of `p` demanded by customer `k`
-    :tp_cost: unit transportation cost (from the plant)
-    :del_cost: unit delivery cost (from a dc)
+    :tp_cost: tp_cost[i,j] -> unit transportation cost from plant `i` to dc `j`
+    :del_cost: tp_cost[i,j] -> unit delivery cost from dc `i` to customer `j`
     :dc_fc: fixed cost for opening a dc
     :dc_vc: unit (variable) cost for operating a dc
     :dc_num: (maximum) number of distribution centers to open
@@ -135,6 +135,7 @@ def lnd_ms(weight, cust, dc, dc_lb, dc_ub, plnt, plnt_ub, demand, tp_cost, del_c
         quicksum(999999*slack[k,p] for k in cust for p in prod if demand[k,p]>0.)
     )
     model.update()
+    model.__data = x,y
     return model
 
 
@@ -153,8 +154,8 @@ def lnd_ss(weight, cust, dc, dc_lb, dc_ub, plnt, plnt_ub, demand, tp_cost, del_c
     :plnt: dict associating a plant id to its (latitute, longitude)
     :plnt_ub: plnt_ub[k] -> upper bound for plant k
     :demand: demand[k,p] -> units of `p` demanded by customer `k`
-    :tp_cost: unit transportation cost (from the plant)
-    :del_cost: unit delivery cost (from a dc)
+    :tp_cost: tp_cost[i,j] -> unit transportation cost from plant `i` to dc `j`
+    :del_cost: tp_cost[i,j] -> unit delivery cost from dc `i` to customer `j`
     :dc_fc: fixed cost for opening a dc
     :dc_vc: unit (variable) cost for operating a dc
     :dc_num: (maximum) number of distribution centers to open
@@ -251,6 +252,7 @@ def lnd_ss(weight, cust, dc, dc_lb, dc_ub, plnt, plnt_ub, demand, tp_cost, del_c
         quicksum(99999999*slack[k] for k in cust)
     )
     model.update()
+    model.__data = x,y
     return model
 
 

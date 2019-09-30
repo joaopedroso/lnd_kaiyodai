@@ -3,6 +3,13 @@ import pandas as pd
 import random
 import numpy as np
 
+def read_data(filename="../data/zipcode.csv.gz"):
+    df = pd.read_csv(filename,index_col="zip")
+    df.index = df.index.map(str)
+    # df.index.astype('str', copy=False)
+    # df['latitude'] = pd.to_numeric(df['latitude'])
+    # df['longitude'] = pd.to_numeric(df['longitude'])
+    return df
 
 def sample_locations(df, n_locations, rnd_stat):
     sample = df.sample(n=n_locations, random_state=rnd_stat)
@@ -25,7 +32,7 @@ def mk_instance(df, n_plants, n_dcs, n_custs, n_prods, seed):
      
     # customer's locations
     (province, town, address, latitude, longitude) = sample_locations(df, n_custs, rnd_stat)
-    locations = list(address.keys())
+    locations = [z for z in address.keys()]
     cust = {z:(latitude[z],longitude[z]) for z in locations}
     name = {z:("C-" + province[z] + town[z] + address[z]) for z in locations}   # names for all zip codes used
      
@@ -54,7 +61,7 @@ def mk_instance(df, n_plants, n_dcs, n_custs, n_prods, seed):
 
 
 def mk_instances():
-    df = pd.read_csv("../data/zipcode.csv.gz",index_col="zip")
+    df = read_data()
     n_plants = 3
     n_prods = 5
     seeds = range(1,11)
@@ -70,7 +77,7 @@ def mk_instances():
 
 class TestInstances(unittest.TestCase):
     def test_one(self):
-        df = pd.read_csv("../data/zipcode.csv.gz",index_col="zip")
+        df = read_data()
         for n in [10, 100, 1000]:
             print(f"testing location sample, n:{n}")
             for seed in range(1,11):

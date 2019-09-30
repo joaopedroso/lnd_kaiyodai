@@ -18,13 +18,37 @@ from dash.exceptions import PreventUpdate
 DATADIR = '../data'
 SRCDIR = '../src'
 sys.path.insert(0, SRCDIR)
-from mk_instances import mk_instance
+from mk_instances import mk_instance, read_data
 from clustering import preclustering
 from lnd import lnd_ms, lnd_ss, mk_costs
 
 
+def jsonize(data):
+    (weight, cust, plnt, dc, dc_lb, dc_ub, demand, plnt_ub, name, tp_cost, del_cost, dc_fc, dc_vc) = data
+    dem_keys = list(demand.keys())  # transform demand[cust,prod] into serializable objects
+    dem_values = list(demand.values())
+    ub_keys = list(plnt_ub.keys())
+    ub_values = list(plnt_ub.values())
+    tp_cost_keys = list(tp_cost.keys())
+    tp_cost_values = list(tp_cost.values())
+    del_cost_keys = list(del_cost.keys())
+    del_cost_values = list(del_cost.values())
+    return (weight, cust, plnt, dc, dc_lb, dc_ub, dem_keys, dem_values, ub_keys, ub_values, name, \
+            tp_cost_keys, tp_cost_values, del_cost_keys, del_cost_values, dc_fc, dc_vc)
+
+
+def unjsonize(data):
+    (weight, cust, plnt, dc, dc_lb, dc_ub, dem_keys, dem_values, ub_keys, ub_values, name, \
+     tp_cost_keys, tp_cost_values, del_cost_keys, del_cost_values, dc_fc, dc_vc) = data
+    demand = {(c,p):dem for ((c,p),dem) in zip(dem_keys, dem_values)}
+    plnt_ub = {(z,p):ub for ((z,p),ub) in zip(ub_keys, ub_values)}
+    tp_cost = {(i,j):cost for ((i,j),cost) in zip(tp_cost_keys, tp_cost_values)}
+    del_cost = {(i,j):cost for ((i,j),cost) in zip(del_cost_keys, del_cost_values)}
+    return (weight, cust, plnt, dc, dc_lb, dc_ub, demand, plnt_ub, name, tp_cost, del_cost, dc_fc, dc_vc)
+
+
 def mk_data(n_plants=3, n_dcs=100, n_custs=100, n_prods=5, seed=1):
-    df = pd.read_csv(DATADIR+"/zipcode.csv.gz",index_col="zip")
+    df = read_data()
     (weight, cust, plnt, dc, dc_lb, dc_ub, demand, plnt_ub, name) = \
         mk_instance(df, n_plants, n_dcs, n_custs, n_prods, seed)
     (tp_cost, del_cost, dc_fc, dc_vc) = mk_costs(plnt, dc, cust)
@@ -33,15 +57,11 @@ def mk_data(n_plants=3, n_dcs=100, n_custs=100, n_prods=5, seed=1):
     return data
 
 
-def solve_lnd(data, model="multiple souce"):
+def solve_lnd(data, cluster_dc, dc_num, model="multiple souce"):
+
     (weight, cust, plnt, dc, dc_lb, dc_ub, demand, plnt_ub, name, tp_cost, del_cost, dc_fc, dc_vc) = data
     
-    # clustering part
     prods = weight.keys()
-    n_clusters = (10 + len(dc))//5
-    cluster_dc = preclustering(cust, dc, prods, demand, n_clusters)
-     
-    dc_num = (90 + len(cluster_dc))//50
     models = {
         "multiple source":lnd_ms,
         "single source":lnd_ss
@@ -61,6 +81,12 @@ def solve_lnd(data, model="multiple souce"):
     for x in model.getVars():
         if x.X > EPS:
             print(x.varName, x.X)
+
+    x,y = model.__data
+
+    dcs = [i for i in cluster_dc if y[i].X > .5]
+    print("solution:", dcs)
+    return dcs
 
 
 # data = mk_data(n_plants=3, n_dcs=100, n_custs=100, n_prods=5, seed=1)
@@ -159,11 +185,11 @@ access_data = (
     )
 access_data = (
     # (id, description, type, shadowed text)
-    ("n_plants-name", "Enter number of plants",               "number", "n_plants", 3),
-    ("n_dcs-name",    "Enter number of distribution centers", "number", "n_dcs",    5),
-    ("n_custs-name",  "Enter number of customers",            "number", "n_custs",  7),
-    ("n_prods-name",  "Enter number of products",             "number", "n_prods",  2),
-    ("seed-name",     "Enter seed for random generator",      "number", "seed",     1),
+    ("n_plants-name", "Enter number of plants",         "number", "n_plants", 3),
+    ("n_dcs-name",    "Number of distribution centers", "number", "n_dcs",    100),
+    ("n_custs-name",  "Number of customers",            "number", "n_custs",  250),
+    ("n_prods-name",  "Number of products",             "number", "n_prods",  5),
+    ("seed-name",     "Seed for random generator",      "number", "seed",     1),
     )
 access_children = [ (html.Label(id="label-".format(dtid), children=dtdesc),
                     dcc.Input(id=dtid, type=dttype, placeholder=dthldr, value=dtval),
@@ -277,13 +303,13 @@ def generate_modal():
                                 """
                         ###### About this app
 
-                        A decision support tool for facility location.
+                        A decision support tool for network logistics design / facility location.
 
                         ###### How to use this app
 
                         To be completed:
 
-                        1. Select data location
+                        1. Instantiate data
                         2. Select potential places for facilities
                         3. Set parameters (number of facilities, ...)
                         4. Optimize the problem
@@ -325,12 +351,22 @@ def build_instructions():
             html.Div(
                 id="choose-nclusters",
                 children=[
-                    html.Label("Number of clusters:", className="three columns", style={'color': 'orange'}),
+                    html.Label("Number of clusters:", className="eight columns", style={'color': 'orange'}),
                     html.Div(
                         daq.NumericInput(id="nclusters", className="setting-input", size=100, max=10000, value=50),
                         className="three columns", style={'color': 'green'}
                     ),
-                    html.Button("Cluster", id="update-DCs", style={'color': 'white'}),
+                ],
+                className="row",
+            ),
+            html.Div(
+                id="choose-ndcs",
+                children=[
+                    html.Label("Number of DCs to open:", className="eight columns", style={'color': 'orange'}),
+                    html.Div(
+                        daq.NumericInput(id="ndcs", className="setting-input", size=100, max=10000, value=5),
+                        className="three columns", style={'color': 'green'}
+                    ),
                 ],
                 className="row",
             ),
@@ -342,6 +378,9 @@ def build_instructions():
                 ],
                 multi=True,
                 value=[1,2],
+            ),
+            html.Div(
+                html.Button("Cluster and optimize", id="update-DCs", style={'color': 'white'}),
             ),
             html.Label(id="products-summary-2"),
         ],
@@ -355,15 +394,6 @@ def build_graph():
                 id="map-container",
                 children=[
                     html.P(className="instructions", children="Customer map"),
-                    dcc.RadioItems(
-                        id="mapbox-view-selector",
-                        options=[
-                            {"label": "basic", "value": "basic"},
-                            {"label": "satellite", "value": "satellite"},
-                            {"label": "dark", "value": "dark"},
-                        ],
-                        value="basic",
-                    ),
                     dcc.Graph(
                         id="dc-map",
                         figure={
@@ -484,7 +514,6 @@ def setup_inst_parameters(n_clicks, n_plants, n_dcs, n_custs, n_prods, seed):
               # ]
               )
 def init_data(n_clicks,  inst_data):
-    print("init_data")
     if n_clicks is None:
         raise PreventUpdate
 
@@ -499,28 +528,12 @@ def init_data(n_clicks,  inst_data):
     if n_plants is None or n_dcs is None or n_custs is None or n_prods is None or seed is None:
         return "incomplete form, please fill values", None
 
-    # try:
-    if True:
-        print("CCCCCCCCCCCCN")
+    try:
         data = mk_data(n_plants, n_dcs, n_custs, n_prods, seed)
-        print("created data")
-        (weight, cust, plnt, dc, dc_lb, dc_ub, demand, plnt_ub, name, tp_cost, del_cost, dc_fc, dc_vc) = data
-        print("transmitted")
-        dem_keys = list(demand.keys())  # transform demand[cust,prod] into serializable objects
-        dem_values = list(demand.values())
-        ub_keys = list(plnt_ub.keys())
-        ub_values = list(plnt_ub.values())
-        tp_cost_keys = list(tp_cost.keys())
-        tp_cost_values = list(tp_cost.values())
-        del_cost_keys = list(del_cost.keys())
-        del_cost_values = list(del_cost.values())
-        print("jsonized")
-        return f'Data in created from {inst_data}', \
-            (weight, cust, plnt, dc, dc_lb, dc_ub, dem_keys, dem_values, ub_keys, ub_values,\
-             tp_cost_keys, tp_cost_values, del_cost_keys, del_cost_values, dc_fc, dc_vc)
-    # except:
-    #     print("XXXXXXXXXXXXXXX")
-    #     return 'No data could be prepared', None
+        jdata = jsonize(data)
+        return f'Data in created from {inst_data}', jdata
+    except:
+        return 'No data could be prepared', None
 
 
 ### import time
@@ -537,15 +550,13 @@ def init_data(n_clicks,  inst_data):
     [Input("data-store", "data")],
 )
 def update_summary(data):
-    print("updating summary...")
     if data is None:
         return 'No data stored'
     
     # (weight, cust, plnt, dc, dc_lb, dc_ub, dem_keys, dem_values, ub_keys, ub_values) = data
-    (weight, cust, plnt, dc, dc_lb, dc_ub, dem_keys, dem_values, ub_keys, ub_values,\
+    (weight, cust, plnt, dc, dc_lb, dc_ub, dem_keys, dem_values, ub_keys, ub_values, name, \
      tp_cost_keys, tp_cost_values, del_cost_keys, del_cost_values, dc_fc, dc_vc) = data
     # demand = dict(zip(dem_keys, dem_values))
-    print(ub_keys, ub_values)
     plnt_ub = {(plnt,prod):ub for ((plnt,prod),ub) in zip(ub_keys, ub_values)}
     return 'Current data stored: {} plants, {} customers, {} products'.format(len(plnt), len(cust), len(weight))
     
@@ -554,14 +565,12 @@ def update_summary(data):
     [Input("data-store", "data")],
 )
 def update_summary_2(data):
-    print("updating summary 2...")
     if data is None:
         return 'No data stored ... {}'.format(data)
     
     # (weight, cust, plnt, dc, dc_lb, dc_ub, dem_keys, dem_values, ub_keys, ub_values) = data
-    (weight, cust, plnt, dc, dc_lb, dc_ub, dem_keys, dem_values, ub_keys, ub_values,\
+    (weight, cust, plnt, dc, dc_lb, dc_ub, dem_keys, dem_values, ub_keys, ub_values, name, \
      tp_cost_keys, tp_cost_values, del_cost_keys, del_cost_values, dc_fc, dc_vc) = data
-    print(ub_keys, ub_values)
     plnt_ub = {(plnt,prod):ub for ((plnt,prod),ub) in zip(ub_keys, ub_values)}
     return 'Current data stored: {} plants, {} customers, {} products'.format(len(plnt), len(cust), len(weight))
     
@@ -570,24 +579,39 @@ def update_summary_2(data):
 @app.callback(
     Output("dc-map", "figure"),
     [Input("update-DCs", "n_clicks")],
-    [State("data-store", "data"), State("nclusters", "value")],
+    [State("data-store", "data"), State("nclusters", "value"), State("ndcs", "value")],
 )
-def update_graph(n_clicks, data, nclusters):
-    print("update_graph")
+def update_graph(n_clicks, data, n_clusters, n_dcs):
     if n_clicks is None or data is None:
-        print("prevent update")
         raise PreventUpdate
 
-    (weight, cust, plnt, dc, dc_lb, dc_ub, dem_keys, dem_values, ub_keys, ub_values,\
-     tp_cost_keys, tp_cost_values, del_cost_keys, del_cost_values, dc_fc, dc_vc) = data
+    data = unjsonize(data)
+    (weight, cust, plnt, dc, dc_lb, dc_ub, demand, plnt_ub, name, tp_cost, del_cost, dc_fc, dc_vc) = data
+
     lats, lons = zip(*[cust[i] for i in cust])
     lat_center = statistics.mean(lats)
     lon_center = statistics.mean(lons)
+    dc_lats, dc_lons = zip(*[dc[i] for i in dc])
+    p_lats, p_lons = zip(*[plnt[i] for i in plnt])
 
-    print(f'clustering {nclusters}...')
-    prods = list(weight.keys())
-    clust_dcs = preclustering(nclusters, dc, prods, demands)
-    printf("done.")
+
+    # clustering part
+    print(f'clustering {n_clusters}...')
+    prods = weight.keys()
+    cluster_dc = preclustering(cust, dc, prods, demand, n_clusters)
+    cdc_lats, cdc_lons = zip(*[dc[i] for i in cluster_dc])
+    print("cluster_dc:", cluster_dc)
+    print("done.")
+
+    # optimization part
+    print(f'optimizing {n_dcs}...')
+    opt_dc = solve_lnd(data, cluster_dc, n_dcs)
+    odc_lats, odc_lons = zip(*[dc[i] for i in opt_dc])
+    print("opt_dc:", opt_dc)
+    print("done.")
+
+
+    
 
     layout = go.Layout(
         clickmode="event+select",
@@ -614,32 +638,59 @@ def update_graph(n_clicks, data, nclusters):
         ),
     )
     pnts = [
-    go.Scattermapbox(
-        lat=lats,
-        lon=lons,
-        text=[i for i in cust],
-        mode="markers",
-        marker={"color": "yellow", "size": 5, "opacity": 1.},
-        name="Customer",
-        # selectedpoints=selected_index,
-        # customdata=text,
+        go.Scattermapbox(
+            lat=p_lats,
+            lon=p_lons,
+            text=[i for i in plnt],
+            mode="markers",
+            marker={"color": "white", "size": 10, "opacity": .9},
+            name="Plant",
+            # selectedpoints=selected_index,
+            # customdata=text,
         ),
-    # go.Scattermapbox(
-    #     lat=plat,
-    #     lon=plon,
-    #     mode="markers",
-    #     marker={"color": "white", "size": 15, "opacity": 0.75},
-    #     text=ptxt,
-    #     name="Plant",
-    #     # selectedpoints=selected_index,
-    #     # customdata=text,
-    # ),
-]
-
-
+        go.Scattermapbox(
+            lat=lats,
+            lon=lons,
+            text=[i for i in cust],
+            mode="markers",
+            marker={"color": "white", "size": 3, "opacity": 1.},
+            name="Customer",
+            # selectedpoints=selected_index,
+            # customdata=text,
+        ),
+        go.Scattermapbox(
+            lat=dc_lats,
+            lon=dc_lons,
+            text=[i for i in dc],
+            mode="markers",
+            marker={"color": "green", "size": 5, "opacity": 0.9},
+            name="DC",
+            # selectedpoints=selected_index,
+            # customdata=text,
+        ),
+        go.Scattermapbox(
+            lat=cdc_lats,
+            lon=cdc_lons,
+            text=[i for i in cluster_dc],
+            mode="markers",
+            marker={"color": "orange", "size": 7, "opacity": 0.9},
+            name="DC-clustered",
+            # selectedpoints=selected_index,
+            # customdata=text,
+        ),
+        go.Scattermapbox(
+            lat=odc_lats,
+            lon=odc_lons,
+            text=[i for i in opt_dc],
+            mode="markers",
+            marker={"color": "yellow", "size": 9, "opacity": 0.9},
+            name="Optimum DCs",
+            # selectedpoints=selected_index,
+            # customdata=text,
+        ),
+    ]
     return {"data": pnts, "layout": layout}
 
-    
 
 
 # @app.callback(

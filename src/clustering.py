@@ -59,6 +59,7 @@ def preclustering(cust, dc, prods, demand, n_clusters):
     # print("{} seconds computing demands".format(end-start))
     
     # start = time.process_time()
+    n_clusters = min(n_clusters,n_dc)
     model = AgglomerativeClustering(linkage='average',
                                     affinity='precomputed',
                                     connectivity=None, # knn_graph,
@@ -72,6 +73,7 @@ def preclustering(cust, dc, prods, demand, n_clusters):
     for i in range(n_clusters):
         indices = np.where(model.labels_ == i)[0]
         demands = [dc_dem[j] for j in indices]
+        print(i, indices, demands)
         dmax = np.argmax(demands)
         # print(i, indices, demands, indices[dmax])
         cluster_dc.append(indices[dmax])
